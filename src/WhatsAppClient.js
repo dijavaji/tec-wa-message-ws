@@ -65,20 +65,6 @@ export async function conectarWhatsApp() {
     }
   });
 
-  sock.ev.on('messages.upsert', async ({ messages }) => {
-    const msg = messages[0]
-    if (!msg.key.fromMe && msg.message?.conversation) {
-      const sender = msg.key.remoteJid
-      const text = msg.message.conversation.toLowerCase()
-
-      console.log(` Mensaje de  ${sender}: ${text}`)
-
-      if (text === 'hi') {
-        await sock.sendMessage(sender, { text: 'Hello! How can I help you today?' })
-      }
-    }
-  });
-
   return sock;
 }
 
