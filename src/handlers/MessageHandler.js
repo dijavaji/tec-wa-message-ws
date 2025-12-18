@@ -13,10 +13,9 @@ export default class MessageHandler {
         const senderJid = msg.key.participant || msg.key.remoteJid;
         
         if (!msg.key.fromMe && msg.message) {
-          const texto = msg.message.conversation || 
-                       msg.message.extendedTextMessage?.text || '';
+          const texto = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
           
-          console.log(`📨 Mensaje de ${senderJid}:`, texto);
+          console.log(`\ueb1b Mensaje enviado por: ${senderJid}:`, texto);
           
           if (texto.toLowerCase().includes('hola')) {
             await this.enviarRespuesta(remoteJid, '¡Hola! ¿En qué puedo ayudarte? 🤖');
@@ -27,7 +26,7 @@ export default class MessageHandler {
 
     // Nuevo evento en v7: contacto actualizado
     this.sock.ev.on('contacts.update', (contacts) => {
-      console.log('👥 Contactos actualizados:', contacts.length);
+      console.log('\udb81\udecb Contactos actualizados:', contacts.length);
     });
   }
 

@@ -47,7 +47,7 @@ export async function conectarWhatsApp() {
     const { connection, lastDisconnect, qr } = update;
     
     if (qr) {
-      console.log('\n📱 Nuevo QR disponible:');
+      console.log('\n \uf10b Nuevo QR disponible:');
       QRCode.generate(qr, { small: true });
     }
     
@@ -55,13 +55,13 @@ export async function conectarWhatsApp() {
       const statusCode = (lastDisconnect?.error)?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
       
-      console.log('🔌 Conexión cerrada:', lastDisconnect?.error, '\nCódigo:', statusCode);
+      console.log('\udb85\udc24 Conexión cerrada:', lastDisconnect?.error, '\nCódigo:', statusCode);
       
       if (shouldReconnect) {
         setTimeout(() => conectarWhatsApp(), 5000);
       }
     } else if (connection === 'open') {
-      console.log('✅ WhatsApp conectado exitosamente');
+      console.log('\uf14a WhatsApp conectado exitosamente');
     }
   });
 
