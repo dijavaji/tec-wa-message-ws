@@ -32,11 +32,11 @@ export async function conectarWhatsApp() {
 
   // Evento de mapeo LID/PN (nuevo en v7)
   sock.ev.on('lid-mapping.update', (mappings) => {
-    console.log('📍 Actualización de mapeo LID:', mappings);
+    console.log('\uf276 Actualización de mapeo LID:', mappings);
   });
 
   sock.ev.on('qr', (qr) => {
-    console.log('\n📱 Escanea este QR con WhatsApp (60 segundos):');
+    console.log('\n \uf42c Escanea este QR con WhatsApp (60 segundos):');
     QRCode.generate(qr, { small: true });
   });
 
