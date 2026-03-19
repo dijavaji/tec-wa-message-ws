@@ -1,0 +1,51 @@
+[
+  {
+    "extendedTextMessage": {
+      "text": "Ve comprale naranjas y dale el jugo todos los dias con un poco de gengibre en polvo o le extraes el zumo eso le va ayudar a subir las defensas",
+      "previewType": "NONE",
+      "contextInfo": {
+        "expiration": 604800,
+        "ephemeralSettingTimestamp": "1739318733",
+        "disappearingMode": {
+          "initiator": "CHANGED_IN_CHAT",
+          "trigger": "CHAT_SETTING",
+          "initiatedByMe": false
+        }
+      },
+      "inviteLinkGroupTypeV2": "DEFAULT"
+    },
+    "messageContextInfo": {
+      "deviceListMetadata": {
+        "recipientKeyHash": "JDWewVXwwAHOQA==",
+        "recipientTimestamp": "1770995551"
+      },
+      "deviceListMetadataVersion": 2,
+      "messageSecret": "qTnI2QjXq3rHh+kFOS6g5L87m9yK/nlQh8XUNuodSv4="
+    }
+  },
+  {
+    "senderKeyDistributionMessage": {
+      "groupId": "120363418495897899@g.us",
+      "axolotlSenderKeyDistributionMessage": "MwjK8fSsARAAGiCZJbdvDo8XJZaL8m4vIoxou3Z4N1FUWYwf9aKgWQ5fQSIhBfga7Nzrx85jndFRxMVIbRAB4PFpxWEYuc/wlXJmJhZp"
+    },
+    "extendedTextMessage": {
+      "text": "Buenos días Ing. @4870711037989, talvez le han informado algo acerca del por qué no han subido la nota del examen práctico?",
+      "contextInfo": {
+        "mentionedJid": [
+          "4870711037989@lid"
+        ],
+        "disappearingMode": {
+          "initiator": "CHANGED_IN_CHAT"
+        }
+      },
+      "inviteLinkGroupTypeV2": "DEFAULT"
+    },
+    "messageContextInfo": {
+      "messageSecret": "RiCgfiEmhKT7P4GOSrFM/12H9qZkn9sGrvCRytk4/YA=",
+      "limitSharingV2": {
+        "trigger": "UNKNOWN",
+        "initiatedByMe": false
+      }
+    }
+  }
+]
