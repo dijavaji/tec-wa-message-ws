@@ -2,11 +2,12 @@ import 'dotenv/config';
 import express from 'express';
 import { conectarWhatsApp } from './WhatsAppClient.js';
 import messages from './messages.json' with { type: 'json'};
+import { DEFAULTS } from './config.js';
 
 //console.log('\uf232 Iniciando WhatsApp Bot...');
 //conectarWhatsApp().catch(console.error);
 
-const PORT = process.env.PORT ?? 1234;
+const PORT = process.env.PORT ?? DEFAULTS.PORT ;
 
 const app = express();
 
@@ -30,7 +31,27 @@ app.get('/messages', (req, res) => {
   res.json(messages);
 });
 
+app.get('/messages/:id', (req, res) => {
+  
+});
 
+app.post('/mesages', (req, res) =>{
+  //TODO enviar messages
+});
+
+app.delete('/messages/:id', (req,res) =>{
+
+});
+
+//actualizar un recurso completo
+app.put('/messages/:id', (req,res) =>{
+
+});
+
+//actualizar parcialmente un recurso
+app.patch('/messages/:id', (req,res) =>{
+
+});
 
 app.listen(PORT, () => {
   console.log(`Servidor esta corriendo en http://localhost:${PORT} \uf427`)
