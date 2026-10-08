@@ -13,6 +13,7 @@
 - **HTTP Client**: `Axios` - For reliable REST POST requests to the orchestrator.
 - **Logging**: `Pino` - For high-performance, structured JSON logging.
 - **Error Handling**: `@hapi/boom` - For standardized HTTP-friendly error objects.
+- **Test**: `jest` - For a delightful JavaScript Testing Framework with a focus on simplicity.
 - **Process Management**: `Nodemon` (Dev) & `Docker` (Prod).
 
 ## Data Patterns
