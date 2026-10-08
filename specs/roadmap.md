@@ -3,12 +3,12 @@
 Implementation order divided into small, manageable phases.
 
 ## Phase 1: Foundation & Refactoring
-- [ ] Initialize `specs/` and project "constitution".
-- [ ] Refactor current monolithic `index.js`/`WhatsAppClient.js` into the proposed service structure:
+- [x] Initialize `specs/` and project "constitution".
+- [x] Refactor current monolithic `index.js`/`WhatsAppClient.js` into the proposed service structure:
     - `src/config/` (env, baileys, logger)
     - `src/services/` (BaileysService, MessageService, SessionService)
     - `src/dto/` (MessageDTO)
-- [ ] Implement `SessionService` to properly manage `auth_info_baileys` within a `storage/` directory.
+- [x] Implement `SessionService` to properly manage `auth_info_baileys` within a `storage/` directory.
 
 ## Phase 2: Message Normalization & Forwarding
 - [ ] Define `MessageDTO.js` fields based on stakeholder requirements.

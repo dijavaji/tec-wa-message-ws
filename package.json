@@ -7,7 +7,7 @@
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "build": "echo 'Proyecto listo para producción'",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
   },
   "keywords": [],
   "author": "technoloqie",
@@ -23,6 +23,7 @@
   "devDependencies": {
     "express": "^5.2.1",
     "jest": "^30.5.2",
-    "nodemon": "^3.1.11"
+    "nodemon": "^3.1.11",
+    "pino-pretty": "^13.2.0"
   }
 }
