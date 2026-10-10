@@ -1,59 +1,48 @@
-import 'dotenv/config';
 import express from 'express';
-import { conectarWhatsApp } from './WhatsAppClient.js';
-import messages from './messages.json' with { type: 'json'};
-import { DEFAULTS } from './config.js';
-
-//console.log('\uf232 Iniciando WhatsApp Bot...');
-//conectarWhatsApp().catch(console.error);
-
-const PORT = process.env.PORT ?? DEFAULTS.PORT ;
+import config from './config/index.js';
+import logger from './config/logger.js';
+import baileysService from './services/BaileysService.js';
+import messageService from './services/MessageService.js';
 
 const app = express();
+const PORT = config.port;
 
-//middleware
-app.use((req, res, next) => {  
-  const timeStr = new Date().toLocaleTimeString(); 
-  console.log(`[${timeStr}] ${req.method} ${req.url}`);  
-  //importante llamar a next()
-  next()
-})
-
-app.get('/', (req, res) => {
-  res.send('Hola mundo desde Express')
+// Middleware de logs
+app.use((req, res, next) => {
+  logger.info(`${req.method} ${req.url}`);
+  next();
 });
 
-app.get('/health', (request, response) => {
-  response.json({status: 'ok', uptime: process.uptime() })
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', uptime: process.uptime() });
 });
 
-app.get('/messages', (req, res) => {
-  res.json(messages);
-});
+// Inicialización de servicios
+async function start() {
+  try {
+    logger.info('Iniciando servicios...');
+    
+    // Conectar WhatsApp
+    await baileysService.init();
 
-app.get('/messages/:id', (req, res) => {
-  
-});
+    // Vincular eventos entre servicios
+    baileysService.on('messages.upsert', (upsert) => {
+      messageService.handleUpsert(upsert);
+    });
 
-app.post('/mesages', (req, res) =>{
-  //TODO enviar messages
-});
+    messageService.on('message', (normalizedMsg) => {
+      logger.info({ msg: normalizedMsg }, 'Nuevo mensaje procesado');
+      // Aquí se podrían agregar más manejadores
+    });
 
-app.delete('/messages/:id', (req,res) =>{
+    app.listen(PORT, () => {
+      logger.info(`Microservicio corriendo en puerto ${PORT}`);
+    });
+  } catch (error) {
+    logger.error('Error durante el inicio del microservicio:', error);
+    process.exit(1);
+  }
+}
 
-});
-
-//actualizar un recurso completo
-app.put('/messages/:id', (req,res) =>{
-
-});
-
-//actualizar parcialmente un recurso
-app.patch('/messages/:id', (req,res) =>{
-
-});
-
-app.listen(PORT, () => {
-  console.log(`Servidor esta corriendo en http://localhost:${PORT} \uf427`)
-})
-
+start();
