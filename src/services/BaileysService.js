@@ -56,6 +56,19 @@ class BaileysService extends EventEmitter {
     return this.sock;
   }
 
+  async sendTextMessage(to, text) {
+    if (!this.sock) {
+      logger.error('No se pudo enviar mensaje: BaileysService no inicializado');
+      return;
+    }
+    try {
+      logger.info({ to }, 'Enviando mensaje de texto via WhatsApp');
+      return await this.sock.sendMessage(to, { text });
+    } catch (error) {
+      logger.error({ error, to }, 'Error enviando mensaje via BaileysService');
+    }
+  }
+
   async sendMessage(to, content) {
     if (!this.sock) throw new Error('BaileysService no inicializado');
     return await this.sock.sendMessage(to, content);
