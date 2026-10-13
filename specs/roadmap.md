@@ -21,16 +21,23 @@ Implementation order divided into small, manageable phases.
 - [x] Close the loop: WA -> Orchestrator -> WA.
 - [x] Validate orchestrator responses before sending back to WhatsApp.
 
-## Phase 3: Reliability & Logging
+## Phase 3: QR Connection Management
+- [ ] Implement `POST /api/whatsapp/instance` to initialize a new WhatsApp instance.
+- [ ] Implement `GET /api/whatsapp/:instanceId/qr` to retrieve the QR code for a specific instance.
+- [ ] Adapt `SessionService` and `BaileysService` to support multiple named instances.
+- [ ] Implement QR expiry (30s) and automatic reconnection logic.
+- [ ] Add lifecycle event handling (`qr`, `ready`, `message_create`) per instance.
+
+## Phase 4: Reliability & Logging
 - [ ] Replace `console.log` with structured `Pino` logging across all services.
 - [ ] Implement `errorHandler` middleware.
 - [ ] Enhance `connection.update` logic to handle diverse disconnection reasons (Baileys specific).
 
-## Phase 4: Containerization & Deployment
+## Phase 5: Containerization & Deployment
 - [ ] Create `Dockerfile` for the microservice.
 - [ ] Configure `docker-compose.yml` including persistent volumes for `storage/`.
 - [ ] Health check optimization.
 
-## Phase 5: Multi-Session (Optional/Extended)
+## Phase 6: Multi-Session (Optional/Extended)
 - [ ] Implement dynamic session initialization based on configuration or API request.
 - [ ] Manage multiple `BaileysService` instances in memory.
