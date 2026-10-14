@@ -19,6 +19,7 @@ class BaileysService extends EventEmitter {
     
     this.userId = userId;
     this.sock = null;
+    this.status = 'initializing';
     logger.debug({ userId }, 'BaileysService instance created');
   }
 
@@ -29,16 +30,17 @@ class BaileysService extends EventEmitter {
     const { state, saveCreds } = await sessionService.getAuthState(this.userId);
 
     this.sock = makeWASocket({
-      logger: logger.child({ module: 'baileys-internal', userId: this.userId }, { level: 'silent' }),
+      logger: logger.child({ module: `baileys-${this.userId}`, userId: this.userId }, { level: 'silent' }),
       printQRInTerminal: false,
       auth: state,
       browser: ['WhatsApp Bot', 'Chrome', '4.0.0'],
     });
 
     // Guardar credenciales usando SessionService
-    this.sock.ev.on('creds.update', (creds) => {
-      sessionService.saveCreds(this.userId, creds);
-    });
+    this.sock.ev.on('creds.update', saveCreds);
+    //this.sock.ev.on('creds.update', (creds) => {
+      //sessionService.saveCreds(this.userId, creds);
+    //});
 
     this.sock.ev.on('connection.update', (update) => {
       const { connection, lastDisconnect, qr } = update;
@@ -47,6 +49,7 @@ class BaileysService extends EventEmitter {
         logger.info({ userId: this.userId }, 'Nuevo QR disponible');
         // Capturar QR en QRService
         qrService.captureQR(qr);
+
         QRCode.generate(qr, { small: true });
         // Emitir evento QR para que InstanceManager lo maneje
         this.emit('qr', qr);
@@ -55,12 +58,8 @@ class BaileysService extends EventEmitter {
       if (connection === 'close') {
         const statusCode = (lastDisconnect?.error)?.output?.statusCode;
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-        
-        logger.warn({ 
-          userId: this.userId, 
-          statusCode, 
-          error: lastDisconnect?.error 
-        }, 'Conexión cerrada');
+        this.status = 'closed';
+        logger.warn({ userId: this.userId, statusCode, error: lastDisconnect?.error }, 'Conexión cerrada');
         
         if (shouldReconnect) {
           logger.info({ userId: this.userId }, 'Intentando reconectar en 5s...');
@@ -68,6 +67,7 @@ class BaileysService extends EventEmitter {
         }
         this.emit('disconnected', { statusCode, shouldReconnect });
       } else if (connection === 'open') {
+        this.status = 'open';
         logger.info({ userId: this.userId }, 'WhatsApp conectado exitosamente');
         this.emit('connected');
       }

@@ -59,7 +59,7 @@ class WhatsAppController {
   async getQR(userId) {
     const instance = this.instanceManager.getInstance(userId);
 
-    console.log("recupero la instancia",instance);
+    //console.log("recupero la instancia",instance);
 
     if (!instance) {
       throw this._buildError('NotFound', 'Instancia no encontrada', 'userId');

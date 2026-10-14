@@ -4,6 +4,7 @@ import BaileysService from './BaileysService.js';
 import SessionService from './SessionService.js';
 import QRService from './QRService.js';
 import logger from '../config/logger.js';
+import messageService from './MessageService.js';
 
 class BaileysInstanceManager extends EventEmitter {
   constructor() {
@@ -29,19 +30,23 @@ class BaileysInstanceManager extends EventEmitter {
 
     // Validar que no exista ya una instancia para este userId
     if (this.instances.has(userId)) {
-      const error = new Error('Usuario ya tiene una instancia activa');
-      error.statusCode = 409;
-      error.code = 'INSTANCE_EXISTS';
-      throw error;
+
+      const existing = this.instances.get(userId);
+
+      if (existing.status === 'open' || existing.status === 'connecting') {
+        const error = new Error('Usuario ya tiene una instancia activa');
+        error.statusCode = 409;
+        error.code = 'INSTANCE_EXISTS';
+        throw error;
+      }
+      // Si existe pero está cerrada, la removemos para crear una nueva
+      this.instances.delete(userId);
     }
 
     logger.info({ userId, phoneNumber }, 'Creando nueva instancia de BaileysService');
 
     // Crear nueva instancia
     const instance = new BaileysService(userId);
-    
-    // Inicializar la instancia
-    await instance.init();
 
     // Guardar metadata
     const instanceId = uuidv4();
@@ -55,15 +60,38 @@ class BaileysInstanceManager extends EventEmitter {
     // Guardar en el registry
     this.instances.set(userId, instance);
 
-    // Setup event listeners para esta instancia
-    this._setupInstanceListeners(instance, userId);
+    try {
+      await instance.init();
+      // Setup event listeners para esta instancia
+      this._setupInstanceListeners(instance, userId);
 
-    // Emitir evento
-    this.emit('instance:created', { userId, instanceId, phoneNumber });
+      // Emitir evento
+      this.emit('instance:created', { userId, instanceId, phoneNumber });
 
-    logger.info({ userId, instanceId }, 'Instancia creada exitosamente');
+      // Vincular eventos entre servicios
+      instance.on('messages.upsert', (upsert) => {
+        messageService.handleUpsert(upsert);
+      });
 
-    return instance;
+      messageService.on('message', async (normalizedMsg) => {
+        try{
+
+          logger.info({ msgId: normalizedMsg.id }, 'Procesando mensaje normalizado');
+
+          } catch (error) {
+          logger.error({ error, msgId: normalizedMsg.id }, 'Error en el flujo de procesamiento de mensaje');
+          await instance.sendTextMessage(normalizedMsg.remoteJid, 'Error en el flujo de procesamiento de mensaje');
+          }
+      });
+      logger.info({ userId, instanceId }, 'Instancia creada exitosamente');
+
+      return instance;
+    } catch (error) {
+      this.instances.delete(userId);
+      logger.error({ instanceId, error }, 'Error al inicializar instancia');
+      throw error;
+    }
+
   }
 
   /**

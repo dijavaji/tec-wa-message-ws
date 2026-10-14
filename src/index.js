@@ -50,35 +50,6 @@ async function start() {
   try {
     logger.info('Iniciando microservicio tec-wa-message-ws...');
 
-    // Iniciar MessageService
-    messageService.on('message', async (normalizedMsg) => {
-      try {
-        logger.info({ msgId: normalizedMsg.id, userId: normalizedMsg.remoteJid }, 'Mensaje normalizado recibido');
-        
-        // 1. Forward al orquestador
-        const response = await messageService.forwardToOrchestrator(normalizedMsg);
-        
-        // 2. Validar respuesta y enviar de vuelta a WhatsApp
-        if (response?.success && response?.data?.text) {
-          // Buscar la instancia correspondiente al usuario
-          const { instanceManager } = (await import('./services/BaileysInstanceManager.js')).default;
-          const userId = normalizedMsg.remoteJid;
-          const instance = instanceManager.getInstance(userId);
-          
-          if (instance) {
-            await instance.sendTextMessage(normalizedMsg.remoteJid, response.data.text);
-            logger.info({ msgId: normalizedMsg.id, to: normalizedMsg.remoteJid }, 'Respuesta enviada a WhatsApp');
-          } else {
-            logger.warn({ userId }, 'Instancia no encontrada para respuesta');
-          }
-        } else {
-          logger.warn({ msgId: normalizedMsg.id, response }, 'El orquestador no devolvió una respuesta válida para enviar');
-        }
-      } catch (error) {
-        logger.error({ error, msgId: normalizedMsg.id }, 'Error en el flujo de procesamiento de mensaje');
-      }
-    });
-
     app.listen(PORT, () => {
       logger.info(`Microservicio corriendo en puerto ${PORT}`);
     });
