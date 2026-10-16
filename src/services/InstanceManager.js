@@ -35,7 +35,9 @@ class InstanceManager {
   }
 
   getInstance(instanceId) {
-    return this.instances.get(instanceId);
+    let instance = this.instances.get(instanceId);
+    logger.info(instance, 'buscamos instancia de WhatsApp');
+    return instance;
   }
 
   getAllInstances() {

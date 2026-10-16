@@ -2,6 +2,7 @@ import makeWASocket, { DisconnectReason, delay } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import EventEmitter from 'events';
 import logger from '../config/logger.js';
+import QRCode from 'qrcode-terminal';
 import SessionService from './SessionService.js';
 import MessageService from './MessageService.js';
 
@@ -36,6 +37,7 @@ class BaileysService extends EventEmitter {
         this.qr = qr;
         this.qrRetryCount++;
         logger.info({ instanceId: this.instanceId, retry: this.qrRetryCount }, 'Nuevo QR generado');
+        QRCode.generate(qr, { small: true });
         this.emit('qr', qr);
 
         if (this.qrRetryCount > this.maxQrRetries) {
