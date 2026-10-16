@@ -2,10 +2,32 @@ import { EventEmitter } from 'events';
 import MessageDTO from '../dto/MessageDTO.js';
 import logger from '../config/logger.js';
 import axiosClient from '../config/axios.js';
+import instanceManager from './InstanceManager.js';
 
 class MessageService extends EventEmitter {
   constructor() {
     super();
+  }
+
+  async handleIncomingMessage(msg) {
+    if (!msg.message || msg.key.fromMe) return;
+
+    try {
+      const normalized = MessageDTO.fromBaileys(msg);
+      logger.debug({ msgId: normalized.id }, 'Mensaje normalizado');
+      
+      const response = await this.forwardToOrchestrator(normalized);
+      
+      if (response?.success && response?.data?.text) {
+        const instanceId = 'default'; // Por ahora usamos default o lo extraemos de algún lado
+        const service = instanceManager.getInstance(instanceId);
+        if (service) {
+          await service.sendTextMessage(normalized.remoteJid, response.data.text);
+        }
+      }
+    } catch (error) {
+      logger.error({ error, msg }, 'Error procesando mensaje entrante');
+    }
   }
 
   handleUpsert(upsert) {
@@ -14,15 +36,7 @@ class MessageService extends EventEmitter {
     if (type !== 'notify') return;
 
     for (const msg of messages) {
-      if (!msg.message || msg.key.fromMe) continue;
-
-      try {
-        const normalized = MessageDTO.fromBaileys(msg);
-        logger.debug({ msgId: normalized.id }, 'Mensaje normalizado');
-        this.emit('message', normalized);
-      } catch (error) {
-        logger.error({ error, msg }, 'Error normalizando mensaje');
-      }
+      this.handleIncomingMessage(msg);
     }
   }
 
@@ -49,16 +63,6 @@ class MessageService extends EventEmitter {
       }
     }
   }
-
-  async enviarRespuesta(to, texto) {
-    try {
-      await this.sock.sendMessage(to, { text: texto });
-      logger.info('✉️ Mensaje enviado a:', to);
-    } catch (error) {
-      logger.error('❌ Error enviando mensaje:', error);
-    }
-  }
-
 }
 
 export default new MessageService();

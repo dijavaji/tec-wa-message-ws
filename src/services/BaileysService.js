@@ -1,21 +1,27 @@
-import makeWASocket, { DisconnectReason } from '@whiskeysockets/baileys';
+import makeWASocket, { DisconnectReason, delay } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import EventEmitter from 'events';
-import QRCode from 'qrcode-terminal';
 import logger from '../config/logger.js';
-import sessionService from './SessionService.js';
+import SessionService from './SessionService.js';
+import MessageService from './MessageService.js';
 
 class BaileysService extends EventEmitter {
-  constructor() {
+  constructor(instanceId = 'default') {
     super();
+    this.instanceId = instanceId;
     this.sock = null;
+    this.sessionService = new SessionService(instanceId);
+    this.qr = null;
+    this.status = 'initializing';
+    this.qrRetryCount = 0;
+    this.maxQrRetries = 3;
   }
 
   async init() {
-    const { state, saveCreds } = await sessionService.getAuthState();
+    const { state, saveCreds } = await this.sessionService.getAuthState();
 
     this.sock = makeWASocket({
-      logger: logger.child({ module: 'baileys-internal' }, { level: 'silent' }),
+      logger: logger.child({ module: `baileys-${this.instanceId}` }, { level: 'silent' }),
       printQRInTerminal: false,
       auth: state,
       browser: ['WhatsApp Bot', 'Chrome', '4.0.0'],
@@ -23,33 +29,53 @@ class BaileysService extends EventEmitter {
 
     this.sock.ev.on('creds.update', saveCreds);
 
-    this.sock.ev.on('connection.update', (update) => {
+    this.sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        logger.info('Nuevo QR disponible');
-        QRCode.generate(qr, { small: true });
+        this.qr = qr;
+        this.qrRetryCount++;
+        logger.info({ instanceId: this.instanceId, retry: this.qrRetryCount }, 'Nuevo QR generado');
         this.emit('qr', qr);
+
+        if (this.qrRetryCount > this.maxQrRetries) {
+          logger.warn({ instanceId: this.instanceId }, 'Límite de reintentos de QR alcanzado. Cerrando instancia.');
+          this.status = 'closed';
+          this.emit('qr_timeout');
+          this.sock.ev.removeAllListeners('connection.update');
+          this.sock.end();
+        }
       }
 
       if (connection === 'close') {
         const statusCode = (lastDisconnect?.error)?.output?.statusCode;
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut && this.status !== 'closed';
         
-        logger.warn({ statusCode, error: lastDisconnect?.error }, 'Conexión cerrada');
+        this.status = 'closed';
+        logger.warn({ instanceId: this.instanceId, statusCode, error: lastDisconnect?.error }, 'Conexión cerrada');
         
         if (shouldReconnect) {
-          logger.info('Intentando reconectar en 5s...');
+          logger.info({ instanceId: this.instanceId }, 'Intentando reconectar en 5s...');
           setTimeout(() => this.init(), 5000);
         }
         this.emit('disconnected', { statusCode, shouldReconnect });
       } else if (connection === 'open') {
-        logger.info('WhatsApp conectado exitosamente');
+        this.status = 'open';
+        this.qr = null;
+        this.qrRetryCount = 0;
+        logger.info({ instanceId: this.instanceId }, 'WhatsApp conectado exitosamente');
         this.emit('connected');
       }
     });
 
-    this.sock.ev.on('messages.upsert', (upsert) => {
+    this.sock.ev.on('messages.upsert', async (upsert) => {
+      if (upsert.type === 'notify') {
+        for (const msg of upsert.messages) {
+          if (!msg.key.fromMe) {
+            await MessageService.handleIncomingMessage(msg);
+          }
+        }
+      }
       this.emit('messages.upsert', upsert);
     });
 
@@ -57,22 +83,22 @@ class BaileysService extends EventEmitter {
   }
 
   async sendTextMessage(to, text) {
-    if (!this.sock) {
-      logger.error('No se pudo enviar mensaje: BaileysService no inicializado');
+    if (this.status !== 'open') {
+      logger.error({ instanceId: this.instanceId }, 'No se pudo enviar mensaje: Instancia no conectada');
       return;
     }
     try {
-      logger.info({ to }, 'Enviando mensaje de texto via WhatsApp');
+      logger.info({ instanceId: this.instanceId, to }, 'Enviando mensaje de texto via WhatsApp');
       return await this.sock.sendMessage(to, { text });
     } catch (error) {
-      logger.error({ error, to }, 'Error enviando mensaje via BaileysService');
+      logger.error({ instanceId: this.instanceId, error, to }, 'Error enviando mensaje via BaileysService');
     }
   }
 
   async sendMessage(to, content) {
-    if (!this.sock) throw new Error('BaileysService no inicializado');
+    if (this.status !== 'open') throw new Error('Instancia no conectada');
     return await this.sock.sendMessage(to, content);
   }
 }
 
-export default new BaileysService();
+export default BaileysService;
