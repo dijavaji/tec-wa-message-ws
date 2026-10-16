@@ -78,6 +78,17 @@ class BaileysInstanceManager extends EventEmitter {
 
           logger.info({ msgId: normalizedMsg.id }, 'Procesando mensaje normalizado');
 
+          // 1. Forward al orquestador
+          const response = await messageService.forwardToOrchestrator(normalizedMsg);
+
+          // 2. Validar respuesta y enviar de vuelta a WhatsApp
+          if (response?.success && response?.data?.text) {
+            await instance.sendTextMessage(normalizedMsg.remoteJid, response.data.text);
+          } else {
+            logger.warn({ msgId: normalizedMsg.id, response }, 'El orquestador no devolvió una respuesta válida para enviar');
+            throw new Error('El orquestador no devolvió una respuesta válida para enviar');
+          }
+
           } catch (error) {
           logger.error({ error, msgId: normalizedMsg.id }, 'Error en el flujo de procesamiento de mensaje');
           await instance.sendTextMessage(normalizedMsg.remoteJid, 'Error en el flujo de procesamiento de mensaje');
