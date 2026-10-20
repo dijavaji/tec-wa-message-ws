@@ -1,7 +1,7 @@
 import express from 'express';
 import config from './config/index.js';
 import logger from './config/logger.js';
-import messageService from './services/MessageService.js';
+import controller from './controllers/WhatsAppController.js';
 import whatsappRoutes from './routes/whatsappRoutes.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import etagMiddleware from './middleware/etagMiddleware.js';
@@ -49,6 +49,8 @@ app.use((req, res, next) => {
 async function start() {
   try {
     logger.info('Iniciando microservicio tec-wa-message-ws...');
+
+    await controller.initAllInstance();
 
     app.listen(PORT, () => {
       logger.info(`Microservicio corriendo en puerto ${PORT}`);

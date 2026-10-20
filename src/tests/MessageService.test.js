@@ -19,10 +19,11 @@ describe('MessageService', () => {
       expect(normalized.id).toBe('123');
       expect(normalized.content).toBe('Hola bot');
       expect(normalized.pushName).toBe('Diego');
+      expect(normalized.ownerUserId).toBe('user_100');
       done();
     });
 
-    messageService.handleUpsert(rawMsg);
+    messageService.handleUpsert(rawMsg, 'user_100');
   });
 
   it('debe ignorar mensajes enviados por mí', () => {
