@@ -41,15 +41,22 @@ Implementation order divided into small, manageable phases.
 - [x] Move message wiring from `index.js` into `BaileysInstanceManager` (per instance).
 - [x] Re-close the loop per instance: WA → Orchestrator → WA (`forwardToOrchestrator` + `sendTextMessage`).
 
-## Phase 3.2: Session Restore & Single Message Pipeline (Fix)
+## Phase 3.2: Session Restore & Message Ownership (Fix)
 - [x] Boot restore: `index.js` → `WhatsAppController.initAllInstance()` → `BaileysInstanceManager.initInstances()`.
 - [x] Add `SessionService.listPersistedUserIds()` to discover `storage/{userId}/auth_info_baileys/creds.json`.
 - [x] Add `SessionService.readMeFromCreds(userId)` to read `me.id` / `me.lid` from disk.
 - [x] Add `restoreInstance(userId)` / `_startInstance` shared path (phone starts as `pending`).
 - [x] After `connected`, sync `phoneNumber` + `jid`/`lid` metadata from `creds.json` (`_syncPhoneFromCreds`).
 - [x] Propagate `ownerUserId` through `MessageDTO` / `MessageService.handleUpsert(upsert, ownerUserId)`.
-- [x] Register a single global message pipeline (`_ensureMessagePipeline`) so replies go only to the owning instance.
+- [x] ~~Register a single global message pipeline (`_ensureMessagePipeline`) so replies go only to the owning instance.~~ *(superseded by Phase 3.3)*
 - [x] Cover with unit tests (`SessionService`, `BaileysInstanceManager`, `MessageService`).
+
+## Phase 3.3: Per-Instance Message Loop & Event Handlers (Fix)
+- [x] Drop the global EventEmitter pipeline (`_ensureMessagePipeline` / `emit('message')`) for reply routing.
+- [x] Make `MessageService.handleUpsert` async and return the normalized `MessageDTO` to the caller.
+- [x] Wire the WA → Orchestrator → WA loop inline on each instance `messages.upsert` (same socket / owning instance; no cross-session replies).
+- [x] Extract `BaileysService.connectionUpdate` / `messagesUpsert` from the init listener block.
+- [x] Prepare `eventHandler` via `sock.ev.process` (batched Baileys events) while keeping direct listeners active.
 
 ## Phase 4: Reliability & Logging
 - [ ] Replace `console.log` with structured `Pino` logging across all services.
