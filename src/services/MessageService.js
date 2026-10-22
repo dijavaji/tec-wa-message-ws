@@ -12,7 +12,7 @@ class MessageService extends EventEmitter {
    * @param {object} upsert - Evento messages.upsert de Baileys
    * @param {string} [ownerUserId] - userId de la instancia que recibió el mensaje
    */
-  handleUpsert(upsert, ownerUserId = null) {
+  async handleUpsert(upsert, ownerUserId = null) {
     const { messages, type } = upsert;
     
     if (type !== 'notify') return;
@@ -22,8 +22,9 @@ class MessageService extends EventEmitter {
 
       try {
         const normalized = MessageDTO.fromBaileys(msg, ownerUserId);
-        logger.debug({ msgId: normalized.id, ownerUserId }, 'Mensaje normalizado');
-        this.emit('message', normalized);
+        logger.info({ msgId: normalized.id, ownerUserId: ownerUserId, fromMe: msg.key.fromMe }, 'Mensaje normalizado');
+        //this.emit('message', normalized);
+        return normalized;
       } catch (error) {
         logger.error({ error, msg }, 'Error normalizando mensaje');
       }
