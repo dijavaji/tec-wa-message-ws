@@ -31,9 +31,24 @@ async function start() {
       messageService.handleUpsert(upsert);
     });
 
-    messageService.on('message', (normalizedMsg) => {
-      logger.info({ msg: normalizedMsg }, 'Nuevo mensaje procesado');
-      // Aquí se podrían agregar más manejadores
+    messageService.on('message', async (normalizedMsg) => {
+      try {
+        logger.info({ msgId: normalizedMsg.id }, 'Procesando mensaje normalizado');
+        
+        // 1. Forward al orquestador
+        const response = await messageService.forwardToOrchestrator(normalizedMsg);
+        
+        // 2. Validar respuesta y enviar de vuelta a WhatsApp
+        if (response?.success && response?.data?.text) {
+          await baileysService.sendTextMessage(normalizedMsg.remoteJid, response.data.text);
+        } else {
+          logger.warn({ msgId: normalizedMsg.id, response }, 'El orquestador no devolvió una respuesta válida para enviar');
+          throw new Error('El orquestador no devolvió una respuesta válida para enviar');
+        }
+      } catch (error) {
+        logger.error({ error, msgId: normalizedMsg.id }, 'Error en el flujo de procesamiento de mensaje');
+        await baileysService.sendTextMessage(normalizedMsg.remoteJid, 'Error en el flujo de procesamiento de mensaje');
+      }
     });
 
     app.listen(PORT, () => {

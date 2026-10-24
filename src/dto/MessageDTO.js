@@ -1,11 +1,28 @@
 export default class MessageDTO {
-  constructor({ id, remoteJid, pushName, messageType, content, timestamp }) {
+  constructor({ id, remoteJid, pushName, messageType, content, timestamp, device, isGroup }) {
     this.id = id;
     this.remoteJid = remoteJid;
     this.pushName = pushName;
     this.messageType = messageType;
-    this.content = content;
+    this.content = this.sanitize(content);
     this.timestamp = timestamp;
+    this.device = device;
+    this.isGroup = isGroup;
+  }
+
+  sanitize(text) {
+    if (typeof text !== 'string') return text;
+    // Sanitización básica de caracteres de control y escapes
+    return text.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").trim();
+  }
+
+  toOrchestrator() {
+    return {
+      senderId: this.remoteJid.split('@')[0], // Usamos el número/id sin el dominio
+      text: this.content,
+      assistantName: process.env.ASSISTANT_NAME || "tec_cubepath_hackatonBot",
+      createdBy: "app-wps"
+    };
   }
 
   static fromBaileys(msg) {
@@ -22,6 +39,10 @@ export default class MessageDTO {
       content = msg.message?.[messageType] || '';
     }
 
+    // Extraer dispositivo si es posible (Baileys suele ponerlo en el ID del mensaje o metadatos de la sesión)
+    const device = msg.key.id.length > 20 ? 'android/ios' : 'web';
+    const isGroup = msg.key.remoteJid.endsWith('@g.us');
+
     return new MessageDTO({
       id: msg.key.id,
       remoteJid: msg.key.remoteJidAlt || msg.key.remoteJid,
@@ -29,6 +50,8 @@ export default class MessageDTO {
       messageType,
       content,
       timestamp: msg.messageTimestamp,
+      device,
+      isGroup
     });
   }
 }

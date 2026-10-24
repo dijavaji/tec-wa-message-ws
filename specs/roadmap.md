@@ -11,10 +11,15 @@ Implementation order divided into small, manageable phases.
 - [x] Implement `SessionService` to properly manage `auth_info_baileys` within a `storage/` directory.
 
 ## Phase 2: Message Normalization & Forwarding
-- [ ] Define `MessageDTO.js` fields based on stakeholder requirements.
-- [ ] Implement normalization logic in `MessageService`.
-- [ ] Integrate `Axios` to POST normalized messages to `tec-messages-ws` endpoint.
-- [ ] Add basic retry logic for orchestrator communication.
+- [x] Define `MessageDTO.js` fields based on stakeholder requirements.
+- [x] Implement normalization logic in `MessageService`.
+- [x] Integrate `Axios` to POST normalized messages to `tec-messages-ws` endpoint.
+- [x] Add basic retry logic for orchestrator communication.
+
+## Phase 2.1: Reply Integration (Fix)
+- [x] Implement `sendTextMessage` in `BaileysService`.
+- [x] Close the loop: WA -> Orchestrator -> WA.
+- [x] Validate orchestrator responses before sending back to WhatsApp.
 
 ## Phase 3: Reliability & Logging
 - [ ] Replace `console.log` with structured `Pino` logging across all services.
