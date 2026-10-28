@@ -57,6 +57,14 @@ Implementation order divided into small, manageable phases.
 - [x] Wire the WA → Orchestrator → WA loop inline on each instance `messages.upsert` (same socket / owning instance; no cross-session replies).
 - [x] Extract `BaileysService.connectionUpdate` / `messagesUpsert` from the init listener block.
 - [x] Prepare `eventHandler` via `sock.ev.process` (batched Baileys events) while keeping direct listeners active.
+- [x] Cover with Jest unit tests (`MessageService`, `BaileysInstanceManager`, `BaileysService`):
+    - `test_handle_upsert_returns_dto` — `handleUpsert` returns normalized `MessageDTO` with `ownerUserId`
+    - `test_handle_upsert_does_not_emit_message` — MUST NOT emit `message` (no global pipeline)
+    - `test_handle_upsert_ignores_from_me` — outbound / `fromMe` messages are skipped
+    - `test_instance_upsert_loop_forwards_and_replies` — upsert → `forwardToOrchestrator` → `sendTextMessage` on same instance
+    - `test_instance_reply_stays_on_owning_socket` — user A message MUST NOT reply via user B socket
+    - `test_connection_update_emits_qr_and_connected` — `connectionUpdate` emits `qr` / `connected`
+    - `test_messages_upsert_reemits_event` — `messagesUpsert` re-emits `messages.upsert` to the manager
 
 ## Phase 4: Reliability & Logging
 - [ ] Replace `console.log` with structured `Pino` logging across all services.
