@@ -55,14 +55,52 @@ class MessageService extends EventEmitter {
     }
   }
 
-  async enviarRespuesta(to, texto) {
+  /*async enviarRespuesta(to, texto) {
     try {
       await this.sock.sendMessage(to, { text: texto });
       logger.info('✉️ Mensaje enviado a:', to);
     } catch (error) {
       logger.error('❌ Error enviando mensaje:', error);
     }
+  }*/
+
+  /**
+   * Procesa un mensaje individual recibido.
+   *
+   * @param {object} event - Evento message.received
+   * @returns {Promise<object|null>}
+   */
+  async handleIncomingMessage(event) {
+    const {  userId, upsertType, messageType, message, content } = event;
+
+    if (!userId || !message?.key?.id || !message?.key?.remoteJid) {
+      logger.warn({ event }, 'Evento de mensaje incompleto');
+      return null;
+    }
+
+    if (message.key.fromMe || upsertType !== 'notify') {
+      return null;
+    }
+
+    try {
+      const messageDTO = MessageDTO.fromBaileys( message, userId, content, messageType );
+
+      logger.info({
+        messageId: messageDTO.id,
+        ownerUserId: messageDTO.ownerUserId,
+        senderId: messageDTO.senderId,
+        messageType: messageDTO.messageType,
+        isGroup: messageDTO.isGroup
+      }, 'Mensaje entrante normalizado');
+
+      return await this.forwardToOrchestrator(messageDTO);
+
+    } catch (error) {
+      logger.error({ error, userId, messageId: message.key.id }, 'Error procesando mensaje entrante');
+      throw error;
+    }
   }
+
 
 }
 
