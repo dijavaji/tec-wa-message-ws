@@ -21,53 +21,42 @@ Implementation order divided into small, manageable phases.
 - [x] Close the loop: WA -> Orchestrator -> WA.
 - [x] Validate orchestrator responses before sending back to WhatsApp.
 
-## Phase 3: QR Connection Management (Multi-Instance + REST API) ✅ COMPLETED
+## Phase 3: QR Connection Management (Multi-Instance)
+- [x] Add `QRService` to capture Baileys QR and expose it as Base64 for the frontend.
+- [x] Add `BaileysInstanceManager` singleton registry (`Map<userId, BaileysService>`).
+- [x] Extend `SessionService` for per-user auth state under `storage/` (`useMultiFileAuthState`).
+- [x] Adapt `BaileysService` for userId injection (independent WebSocket sessions).
+- [x] Expose REST management API via Express (`WhatsAppController` + `whatsappRoutes`):
+    - create / get status / get QR / delete instance
+- [x] Add ETag middleware for QR polling (`304 Not Modified`).
+- [x] Add centralized `errorHandler` middleware for management API errors.
+- [x] Wire `index.js` to the instance manager (no single global socket).
+- [x] Cover with unit + multi-user integration tests.
 
-**Feature Branch:** `feature/003-qr-connection-management`
+## Phase 3.1: Multi-Instance Session & Message Loop (Fix)
+- [x] Persist session correctly via Baileys native `saveCreds` on `creds.update`.
+- [x] Track connection `status` on each `BaileysService` instance.
+- [x] Allow recreating closed instances; return 409 only when already active.
+- [x] Roll back registry entries when `init()` fails.
+- [x] Move message wiring from `index.js` into `BaileysInstanceManager` (per instance).
+- [x] Re-close the loop per instance: WA → Orchestrator → WA (`forwardToOrchestrator` + `sendTextMessage`).
 
-**Documentación:** Ver `specs/003-qr-connection-management/`
-  - `requirements.md` — Especificación EARS de 16 requerimientos
-  - `design.md` — Arquitectura con 6 secciones + diagramas Mermaid
-  - `tasks.md` — Plan ejecutable con 2 niveles de tareas
-
-**Tareas Principales:**
-
-### GROUP A: Servicios Base ✅
-- [x] A.1 — Crear QRService (captura + Base64)
-- [x] A.2 — Crear BaileysInstanceManager (Singleton registry)
-- [x] A.3 — Refactorizar SessionService (multi-user)
-- [x] A.4 — Adaptar BaileysService (user-id injection)
-
-### GROUP B: Controladores y Rutas ✅
-- [x] B.1 — Crear WhatsAppController
-- [x] B.2 — Crear whatsappRoutes.js
-
-### GROUP C: Middlewares de Optimización ✅
-- [x] C.1 — ETag Middleware (caché HTTP 304)
-- [x] C.2 — Error Handler Middleware (centralizado)
-
-### GROUP D: Refactorización Integradora ✅
-- [x] D.1 — Refactorizar index.js (usar InstanceManager)
-
-### GROUP E: Tests Exhaustivos ✅
-- [x] E.1 — Suite de unit tests
-- [x] E.2 — Integration tests (multi-user)
-- [ ] E.3 — E2E tests (flujo completo)
-
-### GROUP F: Documentación y Cleanup ✅
-- [x] F.1 — Actualizar documentación
-- [x] F.2 — Validación final y merge
+## Phase 3.2: Session Restore & Single Message Pipeline (Fix)
+- [x] Boot restore: `index.js` → `WhatsAppController.initAllInstance()` → `BaileysInstanceManager.initInstances()`.
+- [x] Add `SessionService.listPersistedUserIds()` to discover `storage/{userId}/auth_info_baileys/creds.json`.
+- [x] Add `SessionService.readMeFromCreds(userId)` to read `me.id` / `me.lid` from disk.
+- [x] Add `restoreInstance(userId)` / `_startInstance` shared path (phone starts as `pending`).
+- [x] After `connected`, sync `phoneNumber` + `jid`/`lid` metadata from `creds.json` (`_syncPhoneFromCreds`).
+- [x] Propagate `ownerUserId` through `MessageDTO` / `MessageService.handleUpsert(upsert, ownerUserId)`.
+- [x] Register a single global message pipeline (`_ensureMessagePipeline`) so replies go only to the owning instance.
+- [x] Cover with unit tests (`SessionService`, `BaileysInstanceManager`, `MessageService`).
 
 ## Phase 4: Reliability & Logging
 - [ ] Replace `console.log` with structured `Pino` logging across all services.
-- [ ] Implement `errorHandler` middleware.
-- [ ] Enhance `connection.update` logic to handle diverse disconnection reasons (Baileys specific).
+- [ ] Harden `connection.update` for diverse Baileys disconnection reasons.
+- [ ] Add E2E coverage for the full QR → connect → message → reply flow.
 
 ## Phase 5: Containerization & Deployment
 - [ ] Create `Dockerfile` for the microservice.
 - [ ] Configure `docker-compose.yml` including persistent volumes for `storage/`.
 - [ ] Health check optimization.
-
-## Phase 6: Multi-Session (Optional/Extended)
-- [ ] Implement dynamic session initialization based on configuration or API request.
-- [ ] Manage multiple `BaileysService` instances in memory.
