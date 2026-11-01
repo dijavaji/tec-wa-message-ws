@@ -118,6 +118,25 @@ class WhatsAppController {
   }
 
   /**
+   * Restaura en memoria todas las sesiones persistidas en disco.
+   * @returns {Promise<{restored: number, failed: number, results: Array}>}
+   */
+  async initAllInstance() {
+    try {
+      const results = await this.instanceManager.initInstances();
+      const restored = results.filter((r) => r.ok).length;
+      const failed = results.filter((r) => !r.ok).length;
+
+      logger.info({ restored, failed, results }, 'Instancias de WhatsApp inicializadas desde disco');
+
+      return { restored, failed, results, status: 'initialized' };
+    } catch (error) {
+      logger.error({ error }, 'Error inicializando instancias');
+      throw error;
+    }
+  }
+
+  /**
    * Valida el formato de un número de teléfono
    * @param {string} phone - Número de teléfono
    * @returns {boolean}

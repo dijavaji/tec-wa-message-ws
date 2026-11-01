@@ -123,6 +123,75 @@ class SessionService {
       logger.debug({ userId, userAuthPath }, 'Directorio auth_info_baileys creado');
     }
   }
+
+  /**
+   * Lista userIds con sesión persistida (creds.json presente).
+   * No carga el auth state en memoria: eso lo hace BaileysService.init().
+   * @returns {string[]}
+   */
+  listPersistedUserIds() {
+    try {
+      if (!fs.existsSync(this.sessionPath)) {
+        return [];
+      }
+
+      return fs
+        .readdirSync(this.sessionPath, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .filter((userId) => {
+          const credsPath = path.join(
+            this.sessionPath,
+            userId,
+            'auth_info_baileys',
+            'creds.json'
+          );
+          return fs.existsSync(credsPath);
+        });
+    } catch (error) {
+      logger.error({ error }, 'Error listando sesiones persistidas');
+      throw error;
+    }
+  }
+
+  /**
+   * Lee me.id / me.lid desde creds.json de un usuario.
+   * @param {string} userId
+   * @returns {{ id?: string, lid?: string, name?: string } | null}
+   */
+  readMeFromCreds(userId) {
+    if (!userId || typeof userId !== 'string') {
+      throw new Error('userId es requerido y debe ser un string');
+    }
+
+    try {
+      const credsPath = path.join(
+        this.sessionPath,
+        userId,
+        'auth_info_baileys',
+        'creds.json'
+      );
+
+      if (!fs.existsSync(credsPath)) {
+        return null;
+      }
+
+      const creds = JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
+      if (!creds?.me) {
+        return null;
+      }
+
+      return {
+        id: creds.me.id,
+        lid: creds.me.lid,
+        name: creds.me.name
+      };
+    } catch (error) {
+      logger.error({ userId, error }, 'Error leyendo me desde creds.json');
+      return null;
+    }
+  }
+
 }
 
 export default new SessionService();

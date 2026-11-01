@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import EventEmitter from 'events';
 import BaileysService from './BaileysService.js';
-import SessionService from './SessionService.js';
+import sessionService from './SessionService.js';
 import QRService from './QRService.js';
 import logger from '../config/logger.js';
 import messageService from './MessageService.js';
@@ -10,14 +10,68 @@ class BaileysInstanceManager extends EventEmitter {
   constructor() {
     super();
     this.instances = new Map(); // Map<userId, BaileysService>
-    this.instanceMetadata = new Map(); // Map<userId, {instanceId, createdAt, phoneNumber, status}>
+    this.instanceMetadata = new Map(); // Map<userId, {instanceId, createdAt, phoneNumber, status, jid?, lid?}>
+    this._messagePipelineBound = false;
+    this._ensureMessagePipeline();
+  }
+
+  /**
+   * Registra una sola vez el pipeline MessageService → respuesta WhatsApp.
+   * Evita N handlers duplicados (una respuesta por cada instancia en memoria).
+   */
+  _ensureMessagePipeline() {
+    if (this._messagePipelineBound) {
+      return;
+    }
+
+    messageService.on('message', async (normalizedMsg) => {
+      await this._handleNormalizedMessage(normalizedMsg);
+    });
+
+    this._messagePipelineBound = true;
+    logger.debug('Pipeline global de mensajes registrado');
+  }
+
+  /**
+   * Enruta la respuesta a la instancia dueña del mensaje (ownerUserId).
+   * @param {import('../dto/MessageDTO.js').default} normalizedMsg
+   */
+  async _handleNormalizedMessage(normalizedMsg) {
+    const { ownerUserId, id: msgId, remoteJid } = normalizedMsg;
+
+    if (!ownerUserId) {
+      logger.warn({ msgId }, 'Mensaje sin ownerUserId; se ignora respuesta');
+      return;
+    }
+
+    const instance = this.instances.get(ownerUserId);
+    if (!instance) {
+      logger.warn({ msgId, ownerUserId }, 'No hay instancia activa para responder');
+      return;
+    }
+
+    try {
+      logger.info({ msgId, ownerUserId }, 'Procesando mensaje normalizado');
+
+      const response = await messageService.forwardToOrchestrator(normalizedMsg);
+
+      if (response?.success && response?.data?.text) {
+        await instance.sendTextMessage(remoteJid, response.data.text);
+      } else {
+        logger.warn({ msgId, response }, 'El orquestador no devolvió una respuesta válida para enviar');
+        throw new Error('El orquestador no devolvió una respuesta válida para enviar');
+      }
+    } catch (error) {
+      logger.error({ error, msgId, ownerUserId }, 'Error en el flujo de procesamiento de mensaje');
+      await instance.sendTextMessage(remoteJid, 'Error en el flujo de procesamiento de mensaje');
+    }
   }
 
   /**
    * Crea una nueva instancia de BaileysService para un userId específico
    * @param {string} userId - ID único del usuario
    * @param {string} phoneNumber - Número de teléfono (para referencia)
-   * @returns {BaileysService} - La instancia creada
+   * @returns {Promise<BaileysService>}
    */
   async createInstance(userId, phoneNumber) {
     if (!userId || typeof userId !== 'string') {
@@ -28,9 +82,63 @@ class BaileysInstanceManager extends EventEmitter {
       throw new Error('phoneNumber es requerido y debe ser un string');
     }
 
-    // Validar que no exista ya una instancia para este userId
-    if (this.instances.has(userId)) {
+    return this._startInstance(userId, phoneNumber);
+  }
 
+  /**
+   * Restaura una instancia desde disco (sin phoneNumber previo).
+   * El JID/número se sincroniza desde creds.json al conectar.
+   * @param {string} userId
+   * @returns {Promise<BaileysService>}
+   */
+  async restoreInstance(userId) {
+    if (!userId || typeof userId !== 'string') {
+      throw new Error('userId es requerido y debe ser un string');
+    }
+
+    return this._startInstance(userId, 'pending');
+  }
+
+  /**
+   * Arranca todas las sesiones persistidas en storage/{userId}/auth_info_baileys.
+   * @returns {Promise<Array<{userId: string, ok: boolean, error?: string}>>}
+   */
+  async initInstances() {
+    const userIds = sessionService.listPersistedUserIds();
+    logger.info({ count: userIds.length, userIds }, 'Restaurando sesiones persistidas');
+
+    const results = [];
+
+    for (const userId of userIds) {
+      try {
+        if (this.instances.has(userId)) {
+          const existing = this.instances.get(userId);
+          if (existing.status === 'open' || existing.status === 'connecting') {
+            results.push({ userId, ok: true, skipped: true });
+            continue;
+          }
+        }
+
+        await this.restoreInstance(userId);
+        results.push({ userId, ok: true });
+      } catch (error) {
+        logger.error({ userId, error }, 'Fallo al restaurar instancia');
+        results.push({ userId, ok: false, error: error.message });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Núcleo compartido create / restore.
+   * @param {string} userId
+   * @param {string} phoneNumber
+   * @returns {Promise<BaileysService>}
+   * @private
+   */
+  async _startInstance(userId, phoneNumber) {
+    if (this.instances.has(userId)) {
       const existing = this.instances.get(userId);
 
       if (existing.status === 'open' || existing.status === 'connecting') {
@@ -39,17 +147,16 @@ class BaileysInstanceManager extends EventEmitter {
         error.code = 'INSTANCE_EXISTS';
         throw error;
       }
-      // Si existe pero está cerrada, la removemos para crear una nueva
+
       this.instances.delete(userId);
+      this.instanceMetadata.delete(userId);
     }
 
-    logger.info({ userId, phoneNumber }, 'Creando nueva instancia de BaileysService');
+    logger.info({ userId, phoneNumber }, 'Iniciando instancia de BaileysService');
 
-    // Crear nueva instancia
     const instance = new BaileysService(userId);
-
-    // Guardar metadata
     const instanceId = uuidv4();
+
     this.instanceMetadata.set(userId, {
       instanceId,
       createdAt: new Date().toISOString(),
@@ -57,52 +164,26 @@ class BaileysInstanceManager extends EventEmitter {
       status: 'waiting_scan'
     });
 
-    // Guardar en el registry
     this.instances.set(userId, instance);
 
     try {
       await instance.init();
-      // Setup event listeners para esta instancia
       this._setupInstanceListeners(instance, userId);
-
-      // Emitir evento
       this.emit('instance:created', { userId, instanceId, phoneNumber });
 
-      // Vincular eventos entre servicios
+      // Solo enruta upsert → MessageService; la respuesta va por el pipeline global
       instance.on('messages.upsert', (upsert) => {
-        messageService.handleUpsert(upsert);
+        messageService.handleUpsert(upsert, userId);
       });
 
-      messageService.on('message', async (normalizedMsg) => {
-        try{
-
-          logger.info({ msgId: normalizedMsg.id }, 'Procesando mensaje normalizado');
-
-          // 1. Forward al orquestador
-          const response = await messageService.forwardToOrchestrator(normalizedMsg);
-
-          // 2. Validar respuesta y enviar de vuelta a WhatsApp
-          if (response?.success && response?.data?.text) {
-            await instance.sendTextMessage(normalizedMsg.remoteJid, response.data.text);
-          } else {
-            logger.warn({ msgId: normalizedMsg.id, response }, 'El orquestador no devolvió una respuesta válida para enviar');
-            throw new Error('El orquestador no devolvió una respuesta válida para enviar');
-          }
-
-          } catch (error) {
-          logger.error({ error, msgId: normalizedMsg.id }, 'Error en el flujo de procesamiento de mensaje');
-          await instance.sendTextMessage(normalizedMsg.remoteJid, 'Error en el flujo de procesamiento de mensaje');
-          }
-      });
-      logger.info({ userId, instanceId }, 'Instancia creada exitosamente');
-
+      logger.info({ userId, instanceId }, 'Instancia iniciada exitosamente');
       return instance;
     } catch (error) {
       this.instances.delete(userId);
-      logger.error({ instanceId, error }, 'Error al inicializar instancia');
+      this.instanceMetadata.delete(userId);
+      logger.error({ instanceId, userId, error }, 'Error al inicializar instancia');
       throw error;
     }
-
   }
 
   /**
@@ -145,21 +226,17 @@ class BaileysInstanceManager extends EventEmitter {
 
     logger.info({ userId }, 'Eliminando instancia de BaileysService');
 
-    // Remover listeners
     this._removeInstanceListeners(instance);
 
-    // Cerrar socket
     try {
       await instance.close();
     } catch (error) {
       logger.warn({ userId, error }, 'Error al cerrar socket al eliminar instancia');
     }
 
-    // Eliminar del registry
     this.instances.delete(userId);
     this.instanceMetadata.delete(userId);
 
-    // Emitir evento
     this.emit('instance:deleted', { userId });
 
     logger.info({ userId }, 'Instancia eliminada exitosamente');
@@ -174,7 +251,7 @@ class BaileysInstanceManager extends EventEmitter {
    */
   getStatus(userId) {
     const metadata = this.instanceMetadata.get(userId);
-    
+
     if (!metadata) {
       return null;
     }
@@ -189,7 +266,7 @@ class BaileysInstanceManager extends EventEmitter {
    */
   updateStatus(userId, status) {
     const metadata = this.instanceMetadata.get(userId);
-    
+
     if (metadata) {
       metadata.status = status;
       this.instanceMetadata.set(userId, metadata);
@@ -198,12 +275,67 @@ class BaileysInstanceManager extends EventEmitter {
   }
 
   /**
+   * Tras conectar, lee me.id / me.lid de creds.json y actualiza metadata.
+   * @param {string} userId
+   */
+  _syncPhoneFromCreds(userId) {
+    const me = sessionService.readMeFromCreds(userId);
+    if (!me) {
+      logger.warn({ userId }, 'creds.json sin me; phoneNumber no actualizado');
+      return;
+    }
+
+    const metadata = this.instanceMetadata.get(userId);
+    if (!metadata) {
+      return;
+    }
+
+    const phoneNumber = this._phoneFromMe(me);
+    metadata.jid = me.id ?? null;
+    metadata.lid = me.lid ?? null;
+    if (phoneNumber) {
+      metadata.phoneNumber = phoneNumber;
+    }
+
+    this.instanceMetadata.set(userId, metadata);
+    logger.info(
+      { userId, phoneNumber: metadata.phoneNumber, jid: metadata.jid, lid: metadata.lid },
+      'phoneNumber sincronizado desde creds.json tras conectar'
+    );
+  }
+
+  /**
+   * Deriva un teléfono E.164 aproximado desde me.id o me.lid.
+   * Ej: 593963037426:27@s.whatsapp.net → +593963037426
+   * @param {{ id?: string, lid?: string }} me
+   * @returns {string | null}
+   */
+  _phoneFromMe(me) {
+    const jid = me.id || me.lid;
+    if (!jid || typeof jid !== 'string') {
+      return null;
+    }
+
+    // LID no es número telefónico usable como phone display
+    if (!me.id && me.lid) {
+      return me.lid;
+    }
+
+    const userPart = jid.split('@')[0] || '';
+    const number = userPart.split(':')[0];
+    if (!number || !/^\d+$/.test(number)) {
+      return jid;
+    }
+
+    return `+${number}`;
+  }
+
+  /**
    * Setup listeners para una instancia específica
    * @param {BaileysService} instance - La instancia
    * @param {string} userId - ID del usuario
    */
   _setupInstanceListeners(instance, userId) {
-    // Escuchar QR
     instance.on('qr', (qr) => {
       logger.debug({ userId }, 'QR recibido, capturando en QRService');
       QRService.captureQR(qr);
@@ -211,23 +343,21 @@ class BaileysInstanceManager extends EventEmitter {
       this.emit('instance:qr_generated', { userId, qr });
     });
 
-    // Escuchar conexión exitosa
     instance.on('connected', () => {
       this.updateStatus(userId, 'ready');
+      this._syncPhoneFromCreds(userId);
       this.emit('instance:ready', { userId });
     });
 
-    // Escuchar desconexión
     instance.on('disconnected', ({ statusCode, shouldReconnect }) => {
       this.updateStatus(userId, 'disconnected');
-      this.emit('instance:disconnected', { 
-        userId, 
-        statusCode, 
-        shouldReconnect 
+      this.emit('instance:disconnected', {
+        userId,
+        statusCode,
+        shouldReconnect
       });
     });
 
-    // Escuchar errores
     instance.on('error', (error) => {
       logger.error({ userId, error }, 'Error en BaileysService');
       this.emit('instance:error', { userId, error });
@@ -239,7 +369,6 @@ class BaileysInstanceManager extends EventEmitter {
    * @param {BaileysService} instance - La instancia
    */
   _removeInstanceListeners(instance) {
-    // clearAllListeners remueve todos los listeners
     instance.removeAllListeners();
   }
 }

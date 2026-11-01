@@ -1,5 +1,5 @@
 export default class MessageDTO {
-  constructor({ id, remoteJid, pushName, messageType, content, timestamp, device, isGroup }) {
+  constructor({ id, remoteJid, pushName, messageType, content, timestamp, device, isGroup, ownerUserId }) {
     this.id = id;
     this.remoteJid = remoteJid;
     this.pushName = pushName;
@@ -8,6 +8,8 @@ export default class MessageDTO {
     this.timestamp = timestamp;
     this.device = device;
     this.isGroup = isGroup;
+    /** userId de la instancia Baileys que recibió el mensaje */
+    this.ownerUserId = ownerUserId ?? null;
   }
 
   sanitize(text) {
@@ -25,7 +27,7 @@ export default class MessageDTO {
     };
   }
 
-  static fromBaileys(msg) {
+  static fromBaileys(msg, ownerUserId = null) {
     const messageType = Object.keys(msg.message || {})[0] || 'unknown';
     let content = '';
 
@@ -51,7 +53,8 @@ export default class MessageDTO {
       content,
       timestamp: msg.messageTimestamp,
       device,
-      isGroup
+      isGroup,
+      ownerUserId
     });
   }
 }
