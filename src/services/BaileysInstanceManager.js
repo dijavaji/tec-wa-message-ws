@@ -12,7 +12,7 @@ class BaileysInstanceManager extends EventEmitter {
     this.instances = new Map(); // Map<userId, BaileysService>
     this.instanceMetadata = new Map(); // Map<userId, {instanceId, createdAt, phoneNumber, status, jid?, lid?}>
     this._messagePipelineBound = false;
-    this._ensureMessagePipeline();
+    //this._ensureMessagePipeline();
   }
 
   /**
@@ -23,11 +23,10 @@ class BaileysInstanceManager extends EventEmitter {
     if (this._messagePipelineBound) {
       return;
     }
-
     messageService.on('message', async (normalizedMsg) => {
-      await this._handleNormalizedMessage(normalizedMsg);
+      const instance = await this._handleNormalizedMessage(normalizedMsg);
+      logger.info( "recuperamos la instancia");
     });
-
     this._messagePipelineBound = true;
     logger.debug('Pipeline global de mensajes registrado');
   }
@@ -39,6 +38,8 @@ class BaileysInstanceManager extends EventEmitter {
   async _handleNormalizedMessage(normalizedMsg) {
     const { ownerUserId, id: msgId, remoteJid } = normalizedMsg;
 
+    logger.info({ownerUserId, msgId, remoteJid}, '_handleNormalizedMessage', )
+
     if (!ownerUserId) {
       logger.warn({ msgId }, 'Mensaje sin ownerUserId; se ignora respuesta');
       return;
@@ -49,22 +50,7 @@ class BaileysInstanceManager extends EventEmitter {
       logger.warn({ msgId, ownerUserId }, 'No hay instancia activa para responder');
       return;
     }
-
-    try {
-      logger.info({ msgId, ownerUserId }, 'Procesando mensaje normalizado');
-
-      const response = await messageService.forwardToOrchestrator(normalizedMsg);
-
-      if (response?.success && response?.data?.text) {
-        await instance.sendTextMessage(remoteJid, response.data.text);
-      } else {
-        logger.warn({ msgId, response }, 'El orquestador no devolvió una respuesta válida para enviar');
-        throw new Error('El orquestador no devolvió una respuesta válida para enviar');
-      }
-    } catch (error) {
-      logger.error({ error, msgId, ownerUserId }, 'Error en el flujo de procesamiento de mensaje');
-      await instance.sendTextMessage(remoteJid, 'Error en el flujo de procesamiento de mensaje');
-    }
+    return instance;
   }
 
   /**
@@ -168,12 +154,31 @@ class BaileysInstanceManager extends EventEmitter {
 
     try {
       await instance.init();
-      this._setupInstanceListeners(instance, userId);
-      this.emit('instance:created', { userId, instanceId, phoneNumber });
+      //this._setupInstanceListeners(instance, userId);
+      //this.emit('instance:created', { userId, instanceId, phoneNumber });
 
-      // Solo enruta upsert → MessageService; la respuesta va por el pipeline global
-      instance.on('messages.upsert', (upsert) => {
-        messageService.handleUpsert(upsert, userId);
+
+      instance.on('messages.upsert',async (upsert) => {
+        const normalizedMsg = await messageService.handleUpsert(upsert, userId);
+        logger.info(normalizedMsg, 'pasa por aqui al enviar mensaje');
+        if(normalizedMsg){
+          const { ownerUserId, id: msgId, remoteJid } = normalizedMsg;
+          try {
+            logger.info({ msgId, ownerUserId }, 'Procesando mensaje normalizado');
+
+            const response = await messageService.forwardToOrchestrator(normalizedMsg);
+
+            if (response?.success && response?.data?.text) {
+              await instance.sendTextMessage(remoteJid, response.data.text);
+            } else {
+              logger.warn({ msgId, response }, 'El orquestador no devolvió una respuesta válida para enviar');
+              throw new Error('El orquestador no devolvió una respuesta válida para enviar');
+            }
+          } catch (error) {
+            logger.error({ error, msgId, ownerUserId }, 'Error en el flujo de procesamiento de mensaje');
+            await instance.sendTextMessage(remoteJid, 'Error en el flujo de procesamiento de mensaje');
+          }
+        }
       });
 
       logger.info({ userId, instanceId }, 'Instancia iniciada exitosamente');

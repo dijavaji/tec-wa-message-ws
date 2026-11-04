@@ -1,11 +1,34 @@
-import { expect, describe, it } from '@jest/globals';
+import { expect, describe, it, jest, beforeEach, afterEach } from '@jest/globals';
 import instanceManager from '../../services/BaileysInstanceManager.js';
 import sessionService from '../../services/SessionService.js';
+import BaileysService from '../../services/BaileysService.js';
+import messageService from '../../services/MessageService.js';
+
+const flushAsync = () => new Promise((resolve) => setImmediate(resolve));
+
+const notifyUpsert = {
+  type: 'notify',
+  messages: [{
+    key: { id: 'msg-loop-1', remoteJid: '5491122334455@s.whatsapp.net' },
+    pushName: 'Diego',
+    message: { conversation: 'Hola bot' },
+    messageTimestamp: 1678901234
+  }]
+};
 
 describe('BaileysInstanceManager', () => {
+  let initSpy;
+
   beforeEach(() => {
     instanceManager.instances.clear();
     instanceManager.instanceMetadata.clear();
+    instanceManager._messagePipelineBound = false;
+    initSpy = jest.spyOn(BaileysService.prototype, 'init').mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    initSpy.mockRestore();
+    jest.restoreAllMocks();
   });
 
   describe('createInstance', () => {
@@ -91,6 +114,50 @@ describe('BaileysInstanceManager', () => {
   describe('getStatus', () => {
     it('debe retornar null si no existe instancia', () => {
       expect(instanceManager.getStatus('non_existent')).toBeNull();
+    });
+  });
+
+  describe('per-instance message loop', () => {
+    it('test_instance_upsert_loop_forwards_and_replies', async () => {
+      await instanceManager.createInstance('user_a', '+54911111111');
+      const instanceA = instanceManager.getInstance('user_a');
+
+      const forwardSpy = jest.spyOn(messageService, 'forwardToOrchestrator').mockResolvedValue({
+        success: true,
+        data: { text: '¡Hola! Soy la IA' }
+      });
+      const sendSpy = jest.spyOn(instanceA, 'sendTextMessage').mockResolvedValue({});
+
+      instanceA.emit('messages.upsert', notifyUpsert);
+      await flushAsync();
+
+      expect(forwardSpy).toHaveBeenCalledTimes(1);
+      expect(forwardSpy.mock.calls[0][0].ownerUserId).toBe('user_a');
+      expect(sendSpy).toHaveBeenCalledWith(
+        '5491122334455@s.whatsapp.net',
+        '¡Hola! Soy la IA'
+      );
+    });
+
+    it('test_instance_reply_stays_on_owning_socket', async () => {
+      await instanceManager.createInstance('user_a', '+54911111111');
+      await instanceManager.createInstance('user_b', '+54922222222');
+
+      const instanceA = instanceManager.getInstance('user_a');
+      const instanceB = instanceManager.getInstance('user_b');
+
+      jest.spyOn(messageService, 'forwardToOrchestrator').mockResolvedValue({
+        success: true,
+        data: { text: 'reply-a' }
+      });
+      const sendA = jest.spyOn(instanceA, 'sendTextMessage').mockResolvedValue({});
+      const sendB = jest.spyOn(instanceB, 'sendTextMessage').mockResolvedValue({});
+
+      instanceA.emit('messages.upsert', notifyUpsert);
+      await flushAsync();
+
+      expect(sendA).toHaveBeenCalledWith('5491122334455@s.whatsapp.net', 'reply-a');
+      expect(sendB).not.toHaveBeenCalled();
     });
   });
 });
