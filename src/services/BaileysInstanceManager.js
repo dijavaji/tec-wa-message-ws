@@ -15,21 +15,6 @@ class BaileysInstanceManager extends EventEmitter {
     //this._ensureMessagePipeline();
   }
 
-  /**
-   * Registra una sola vez el pipeline MessageService → respuesta WhatsApp.
-   * Evita N handlers duplicados (una respuesta por cada instancia en memoria).
-   */
-  _ensureMessagePipeline() {
-    if (this._messagePipelineBound) {
-      return;
-    }
-    messageService.on('message', async (normalizedMsg) => {
-      const instance = await this._handleNormalizedMessage(normalizedMsg);
-      logger.info( "recuperamos la instancia");
-    });
-    this._messagePipelineBound = true;
-    logger.debug('Pipeline global de mensajes registrado');
-  }
 
   /**
    * Enruta la respuesta a la instancia dueña del mensaje (ownerUserId).
@@ -140,7 +125,7 @@ class BaileysInstanceManager extends EventEmitter {
 
     logger.info({ userId, phoneNumber }, 'Iniciando instancia de BaileysService');
 
-    const instance = new BaileysService(userId);
+    const instance = new BaileysService(userId); //new BaileysService(userId, { acceptedUpsertTypes: ['notify', 'append'] })
     const instanceId = uuidv4();
 
     this.instanceMetadata.set(userId, {
@@ -150,36 +135,15 @@ class BaileysInstanceManager extends EventEmitter {
       status: 'waiting_scan'
     });
 
-    this.instances.set(userId, instance);
+    // Registrar listeners antes de inicializar el socket.
+    this._setupInstanceListeners(instance, userId);
 
     try {
       await instance.init();
-      //this._setupInstanceListeners(instance, userId);
-      //this.emit('instance:created', { userId, instanceId, phoneNumber });
 
+      this.instances.set(userId, instance);
 
-      instance.on('messages.upsert',async (upsert) => {
-        const normalizedMsg = await messageService.handleUpsert(upsert, userId);
-        logger.info(normalizedMsg, 'pasa por aqui al enviar mensaje');
-        if(normalizedMsg){
-          const { ownerUserId, id: msgId, remoteJid } = normalizedMsg;
-          try {
-            logger.info({ msgId, ownerUserId }, 'Procesando mensaje normalizado');
-
-            const response = await messageService.forwardToOrchestrator(normalizedMsg);
-
-            if (response?.success && response?.data?.text) {
-              await instance.sendTextMessage(remoteJid, response.data.text);
-            } else {
-              logger.warn({ msgId, response }, 'El orquestador no devolvió una respuesta válida para enviar');
-              throw new Error('El orquestador no devolvió una respuesta válida para enviar');
-            }
-          } catch (error) {
-            logger.error({ error, msgId, ownerUserId }, 'Error en el flujo de procesamiento de mensaje');
-            await instance.sendTextMessage(remoteJid, 'Error en el flujo de procesamiento de mensaje');
-          }
-        }
-      });
+      this.emit('instance:created', { userId, instanceId, instance });
 
       logger.info({ userId, instanceId }, 'Instancia iniciada exitosamente');
       return instance;
@@ -343,7 +307,7 @@ class BaileysInstanceManager extends EventEmitter {
   _setupInstanceListeners(instance, userId) {
     instance.on('qr', (qr) => {
       logger.debug({ userId }, 'QR recibido, capturando en QRService');
-      QRService.captureQR(qr);
+      //QRService.captureQR(qr);
       this.updateStatus(userId, 'waiting_scan');
       this.emit('instance:qr_generated', { userId, qr });
     });
@@ -367,6 +331,98 @@ class BaileysInstanceManager extends EventEmitter {
       logger.error({ userId, error }, 'Error en BaileysService');
       this.emit('instance:error', { userId, error });
     });
+
+    // Evento de negocio: mensaje individual clasificado.
+    instance.on('message.received', (event) => {
+      this._handleIncomingMessage(event, userId, instance)
+      .catch((error) => {
+        logger.error( { userId, messageId: event.messageId, error }, 'Error procesando mensaje entrante' );
+      });
+    });
+
+  }
+
+  async _handleIncomingMessage(event, userId, instance) {
+    const message = event.message;
+
+    // Obtener los datos desde la estructura real de Baileys
+    const messageId = message?.key?.id ?? event.messageId;
+    const remoteJid = message?.key?.remoteJid ?? event.remoteJid;
+
+    try {
+      if (!messageId || !remoteJid) {
+        logger.warn({
+          userId,
+          messageId,
+          remoteJid
+        }, 'Mensaje recibido sin identificadores válidos');
+
+        return;
+      }
+
+      logger.info({
+        userId,
+        messageId,
+        remoteJid,
+        messageType: event.messageType,
+        upsertType: event.upsertType
+      }, 'Procesando mensaje entrante');
+
+      // 1. Normalizar y enviar al orquestador
+      const response = await messageService.handleIncomingMessage({
+        ...event,
+        userId
+      });
+
+      // 2. Validar respuesta del orquestador
+      const responseText = response?.data?.text;
+
+      if (!response?.success || !responseText) {
+        logger.warn({
+          userId,
+          messageId,
+          response
+        }, 'El orquestador no devolvió una respuesta válida');
+
+        return;
+      }
+
+      // 3. Responder por WhatsApp
+      await instance.sendTextMessage(remoteJid, responseText);
+
+      logger.info({
+        userId,
+        messageId,
+        remoteJid
+      }, 'Respuesta enviada correctamente');
+
+    } catch (error) {
+      logger.error({
+        userId,
+        messageId,
+        remoteJid,
+        error: error.message,
+        stack: error.stack
+      }, 'Error en el flujo de procesamiento del mensaje');
+
+      // Evitar enviar una respuesta de error si la instancia está desconectada
+      if (!remoteJid || instance.status !== 'open') {
+        return;
+      }
+
+      try {
+        await instance.sendTextMessage(
+          remoteJid,
+          'No fue posible procesar tu mensaje. Inténtalo nuevamente.'
+        );
+      } catch (sendError) {
+        logger.error({
+          userId,
+          messageId,
+          error: sendError.message
+        }, 'No se pudo enviar el mensaje de error');
+      }
+    }
   }
 
   /**

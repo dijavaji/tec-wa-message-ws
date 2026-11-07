@@ -66,6 +66,15 @@ Implementation order divided into small, manageable phases.
     - `test_connection_update_emits_qr_and_connected` — `connectionUpdate` emits `qr` / `connected`
     - `test_messages_upsert_reemits_event` — `messagesUpsert` re-emits `messages.upsert` to the manager
 
+## Phase 3.4: Message Classification & Connection Resilience (Fix)
+- [x] Implement `MessageClassifier` utility to unify Baileys content extraction (text, image, buttons).
+- [x] Refactor `BaileysService` with explicit connection states (`idle`, `connecting`, `open`, `closed`).
+- [x] Add robust auto-reconnection logic with configurable delays in `BaileysService`.
+- [x] Switch to event-driven flow: `BaileysService` emits `message.received` after classification.
+- [x] Expand `MessageDTO` for group support (`senderJid`), text extraction, and sanitization.
+- [x] Centralize "Orchestrator Loop" in `BaileysInstanceManager._handleIncomingMessage`.
+- [x] Ensure clean resource cleanup in `BaileysService.close()`.
+
 ## Phase 4: Reliability & Logging
 - [ ] Replace `console.log` with structured `Pino` logging across all services.
 - [ ] Harden `connection.update` for diverse Baileys disconnection reasons.
