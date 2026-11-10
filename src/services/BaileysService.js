@@ -1,154 +1,252 @@
-import makeWASocket, { DisconnectReason } from '@whiskeysockets/baileys';
-import { Boom } from '@hapi/boom';
-import EventEmitter from 'events';
+import makeWASocket, { DisconnectReason, getContentType, normalizeMessageContent } from '@whiskeysockets/baileys'
+
 import QRCode from 'qrcode-terminal';
+import EventEmitter from 'node:events';
 import logger from '../config/logger.js';
+import messageClassifier from '../utils/MessageClassifier.js';
 import sessionService from './SessionService.js';
 import qrService from './QRService.js';
 
+const DEFAULT_RECONNECT_DELAY_MS = 5_000;
+
 class BaileysService extends EventEmitter {
-  /**
-   * Constructor with userId injection
-   * @param {string} userId - ID único del usuario para esta instancia
-   */
-  constructor(userId) {
-    super();
+  constructor(
+    userId,
+    {
+      reconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS,
+      // Por defecto procesa mensajes nuevos. Agrega 'append' si también
+      // quieres procesar mensajes históricos o añadidos.
+      acceptedUpsertTypes = ['notify'],
+      ignoreFromMe = true
+    } = {}
+  ) {
+    super()
+
     if (!userId || typeof userId !== 'string') {
-      throw new Error('userId es requerido y debe ser un string');
+      throw new Error('userId es requerido y debe ser un string')
     }
-    
-    this.userId = userId;
-    this.sock = null;
-    this.status = 'initializing';
-    logger.debug({ userId }, 'BaileysService instance created');
+
+    this.userId = userId
+    this.reconnectDelayMs = reconnectDelayMs
+    this.acceptedUpsertTypes = new Set(acceptedUpsertTypes)
+    this.ignoreFromMe = ignoreFromMe
+
+    this.sock = null
+    this.status = 'idle'
+    this.stopped = false
+    this.startPromise = null
+    this.reconnectTimer = null
+
+    logger.debug({ userId }, 'BaileysService creado')
   }
 
   async init() {
-    logger.info({ userId: this.userId }, 'Inicializando BaileysService con sesión específica del usuario');
+    if (this.stopped) {
+      throw new Error('BaileysService fue cerrado y no puede reiniciarse')
+    }
 
-    // Obtener estado de autenticación para este userId
-    const { state, saveCreds } = await sessionService.getAuthState(this.userId);
+    // Evita crear dos sockets si init() se invoca en paralelo.
+    if (this.startPromise) return this.startPromise
 
-    this.sock = makeWASocket({
-      logger: logger.child({ module: `baileys-${this.userId}`, userId: this.userId }, { level: 'silent' }),
-      printQRInTerminal: false,
-      auth: state,
-      browser: ['WhatsApp Bot', 'Chrome', '4.0.0'],
-    });
-
-    //this.eventHandler();
-
-    // Guardar credenciales usando SessionService
-    this.sock.ev.on('creds.update', saveCreds);
-    //this.sock.ev.on('creds.update', (creds) => {
-      //sessionService.saveCreds(this.userId, creds);
-    //});
-
-    this.sock.ev.on('connection.update', (update) => {
-      this.connectionUpdate(update);
-    });
-
-    this.sock.ev.on('messages.upsert', (event) => {
-      this.messagesUpsert(event);
-    });
-
-    return this.sock;
-  }
-
-  eventHandler(){
-    this.sock.ev.process(async (events) => {
-
-      try{
-        if (events.call) {
-          logger.info({ userId: this.userId}, 'Evento llamada');
-        }
-
-        if(events['creds.update']){
-          sessionService.saveCreds(this.userId, events['creds.update']);
-        }
-
-        if (events['connection.update']) {
-          this.connectionUpdate(events['connection.update']);
-        }
-
-        if (events['messages.upsert']) {
-          this.messagesUpsert(events['messages.upsert']);
-        }
-
-      }catch(error){
-          logger.error({ userId: this.userId, error}, 'Error eventHandler de BaileysService');
+      // Si ya hay un socket conectado o conectándose, reutilízalo.
+      if (this.sock && ['connecting', 'open'].includes(this.status)) {
+        return this.sock
       }
+
+      this.startPromise = this.createSocket()
+      .catch((error) => {
+        this.status = 'closed'
+        logger.error( { userId: this.userId, error }, 'Error inicializando Baileys');
+        this.scheduleReconnect();
+        throw error
+      })
+      .finally(() => {
+        this.startPromise = null
+      })
+
+      return this.startPromise
+  }
+
+  async createSocket() {
+    const { state, saveCreds } = await sessionService.getAuthState(this.userId)
+
+    if (this.stopped) {
+      throw new Error('BaileysService fue cerrado durante la inicialización');
+    }
+
+    const socket = makeWASocket({
+      logger: logger.child({ module: `baileys-${this.userId}`, userId: this.userId }, { level: 'silent' }),
+                                printQRInTerminal: false,
+                                auth: state,
+                                browser: ['WhatsApp Bot', 'Chrome', '4.0.0'],
     });
+
+    this.sock = socket;
+    this.status = 'connecting';
+
+    socket.ev.on('creds.update', () => {
+      //sessionService.saveCreds(this.userId, creds);
+      Promise.resolve(saveCreds()).catch((error) => {
+        logger.error( { userId: this.userId, error }, 'Error guardando credenciales');
+      })
+    });
+
+    socket.ev.on('connection.update', (update) => {
+      this.handleConnectionUpdate(update, socket)
+    })
+
+    socket.ev.on('messages.upsert', (event) => {
+      // EventEmitter no espera promesas de los callbacks.
+      this.handleMessagesUpsert(event).catch((error) => {
+        logger.error(  { userId: this.userId, error }, 'Error procesando messages.upsert' );
+      });
+    })
+
+    return socket
   }
 
-  messagesUpsert(event){
-    //if (event.type !== 'notify') return
-      this.emit('messages.upsert', event);
+  async handleMessagesUpsert(event) {
+    // Mantiene compatibilidad con el código que ya escucha el evento bruto.
+    this.emit('messages.upsert', event);
+
+    if (!this.acceptedUpsertTypes.has(event.type)) {
+      logger.debug( { userId: this.userId, upsertType: event.type }, 'Upsert ignorado por configuración' );
+      return;
+    }
+
+    for (const message of event.messages ?? []) {
+      try {
+        await this.processMessage(message, event.type)
+      } catch (error) {
+        logger.error( { userId: this.userId, messageId: message?.key?.id, error }, 'Error procesando mensaje');
+      }
+    }
   }
 
-  connectionUpdate(event){
+  async processMessage(message, upsertType) {
 
-    const { connection, lastDisconnect, qr } = event;
+    if (!message?.message) return
+
+      if (this.ignoreFromMe && message.key?.fromMe) {
+        return
+      }
+
+      const classification = messageClassifier.classify(message)
+
+      if (!classification) {
+        logger.debug( { userId: this.userId, messageId: message.key?.id }, 'No se pudo clasificar el mensaje' );
+        return;
+      }
+
+      const { rawType, category, content } = classification;
+
+      this.emit('message.received', { userId: this.userId, upsertType, messageId: message.key?.id, remoteJid: message.key?.remoteJid,
+        participant: message.key?.participant,
+        fromMe: message.key?.fromMe ?? false,
+        rawType,
+        category,
+        message,
+        content
+      })
+  }
+
+  handleConnectionUpdate(update, socket) {
+    const { connection, lastDisconnect, qr } = update
 
     if (qr) {
       logger.info({ userId: this.userId }, 'Nuevo QR disponible');
-      // Capturar QR en QRService
       qrService.captureQR(qr);
-
       QRCode.generate(qr, { small: true });
       // Emitir evento QR para que InstanceManager lo maneje
       this.emit('qr', qr);
     }
 
-    if (connection === 'close') {
-      const statusCode = (lastDisconnect?.error)?.output?.statusCode;
-      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      this.status = 'closed';
-      logger.warn({ userId: this.userId, statusCode, error: lastDisconnect?.error }, 'Conexión cerrada');
+    if (connection === 'open') {
+      this.clearReconnectTimer()
+      this.status = 'open'
 
-      if (shouldReconnect) {
-        logger.info({ userId: this.userId }, 'Intentando reconectar en 5s...');
-        setTimeout(() => this.init(), 5000);
-      }
-      this.emit('disconnected', { statusCode, shouldReconnect });
-    } else if (connection === 'open') {
-      this.status = 'open';
-      logger.info({ userId: this.userId }, 'WhatsApp conectado exitosamente');
-      this.emit('connected');
+      logger.info({ userId: this.userId }, 'WhatsApp conectado')
+      this.emit('connected')
+      return
     }
 
+    if (connection !== 'close') return
+
+      const statusCode = lastDisconnect?.error?.output?.statusCode
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut
+
+      // No borres accidentalmente un socket más nuevo.
+      if (this.sock === socket) {
+        this.sock = null;
+      }
+
+      this.status = 'closed';
+
+    logger.warn( { userId: this.userId, statusCode, error: lastDisconnect?.error }, 'Conexión cerrada');
+
+    this.emit('disconnected', { statusCode, shouldReconnect });
+
+    if (shouldReconnect) {
+      this.scheduleReconnect();
+    }
+  }
+
+  scheduleReconnect() {
+    if (this.stopped || this.reconnectTimer) return;
+
+    logger.info( { userId: this.userId, delayMs: this.reconnectDelayMs }, 'Programando reconexión');
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+
+      this.init().catch(() => {
+        // init() registra el error y programa el siguiente intento.
+      })
+    }, this.reconnectDelayMs)
+  }
+
+  clearReconnectTimer() {
+    if (!this.reconnectTimer) return;
+
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
   }
 
   async sendTextMessage(to, text) {
-    if (!this.sock) {
-      logger.error({ userId: this.userId }, 'No se pudo enviar mensaje: BaileysService no inicializado');
-      return;
-    }
-    try {
-      logger.info({ userId: this.userId, to }, 'Enviando mensaje de texto via WhatsApp');
-      return await this.sock.sendMessage(to, { text });
-    } catch (error) {
-      logger.error({ userId: this.userId, error, to }, 'Error enviando mensaje via BaileysService');
-    }
+    return this.sendMessage(to, { text })
   }
 
   async sendMessage(to, content) {
-    if (!this.sock) throw new Error('BaileysService no inicializado');
-    return await this.sock.sendMessage(to, content);
+    if (!this.sock || this.status !== 'open') {
+      throw new Error('BaileysService no está conectado')
+    }
+
+    try {
+      return await this.sock.sendMessage(to, content)
+    } catch (error) {
+      logger.error(
+        { userId: this.userId, to, error },
+        'Error enviando mensaje'
+      )
+      throw error
+    }
   }
 
-  /**
-   * Cierra la conexión y libera recursos
-   */
   async close() {
-    if (this.sock) {
-      logger.info({ userId: this.userId }, 'Cerrando conexión de BaileysService');
-      await this.sock.close();
-      this.sock = null;
+    this.stopped = true
+    this.status = 'closed'
+    this.clearReconnectTimer()
+
+    const socket = this.sock
+    this.sock = null
+
+    if (socket) {
+      logger.info({ userId: this.userId }, 'Cerrando conexión Baileys')
+      socket.end(new Error('BaileysService cerrado por la aplicación'))
     }
-    // Remover listeners para evitar memory leaks
-    this.removeAllListeners();
+
+    this.removeAllListeners()
   }
 }
 
-export default BaileysService;
+export default BaileysService
